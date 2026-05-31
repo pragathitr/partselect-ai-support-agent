@@ -28,7 +28,7 @@ This implements Anthropic's orchestrator-workers pattern: a lightweight supervis
 
 Separating routing, domain reasoning, tool execution, and safety review means each component can be tested, replaced, and reasoned about independently.
 
-The frontend is a Create React App chat UI based on the provided starter style, extended with streaming events and structured cards for products, compatibility, installation, troubleshooting, validation, and escalation.
+The frontend is a React chat UI extended with streaming events and structured cards for products, compatibility, installation, troubleshooting, validation, and escalation. It is currently built with Create React App; for production the natural migration is Next.js — SSR, Vercel-native deployment, and API route co-location. The component structure is already organized to make that a straightforward lift.
 
 See [docs/architecture.md](docs/architecture.md) for the full design walkthrough.
 
