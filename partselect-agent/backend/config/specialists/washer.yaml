@@ -1,0 +1,8 @@
+appliance_type: washer
+display_name: Washer
+category_id: 3
+is_active: false
+stub_message: |
+  I can see you're asking about washer parts. PartSelect does carry washers —
+  I'm not yet trained on that category. You can browse washer parts at
+  partselect.com/washers or I can connect you with a specialist.

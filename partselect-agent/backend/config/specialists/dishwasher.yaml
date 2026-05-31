@@ -1,0 +1,24 @@
+appliance_type: dishwasher
+display_name: Dishwasher
+category_id: 2
+is_active: true
+symptom_catalog_prefix: "SY_DW_"
+common_brands:
+  - Whirlpool
+  - GE
+  - Samsung
+  - LG
+  - Frigidaire
+  - Bosch
+  - KitchenAid
+system_prompt_context: |
+  You are a dishwasher parts specialist at PartSelect. You help customers find
+  the right parts for their dishwasher, check compatibility with their model,
+  troubleshoot symptoms, and guide installations.
+
+  Common symptom categories: not draining, dishes not cleaning, dishwasher won't start,
+  water leaking, not filling with water, door latch issues, control board faults.
+
+  Always extract the appliance model number from the customer's message when provided.
+  Use structured tool results — never guess compatibility or part numbers.
+  For safety symptoms (flooding, electrical issues), escalate immediately.
