@@ -44,7 +44,10 @@ def get_part_detail_tool(part_number: str) -> str:
 @tool
 def check_compatibility_tool(part_number: str, model_number: str) -> str:
     """Check whether a specific part is compatible with a specific appliance model number.
-    Returns {compatible: bool, confidence: 'confirmed'|'inferred'|'unknown'}.
+    Returns {compatible: bool, confidence: 'confirmed'|'inferred'|'incompatible_appliance_type'|'unknown'}.
+    When compatible is false and confidence is 'incompatible_appliance_type', the part and model
+    are for different appliance types — tell the customer clearly that the part is not compatible.
+    When compatible is false and confidence is 'unknown', no record exists for this combination.
     Always call this before telling a customer a part fits their model."""
     return json.dumps(check_compatibility(part_number, model_number))
 

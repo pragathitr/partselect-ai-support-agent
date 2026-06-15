@@ -97,6 +97,28 @@ def check_compatibility(
         ).fetchone()
         if row:
             return {"compatible": True, "confidence": row["confidence"]}
+
+        # Detect cross-appliance mismatch explicitly so the specialist can give
+        # a definitive answer rather than hedging on "unknown".
+        mismatch = conn.execute(
+            """
+            SELECT p_cat.slug AS part_appliance, m_cat.slug AS model_appliance
+            FROM parts p
+            JOIN appliance_categories p_cat ON p_cat.id = p.category_id
+            JOIN models m ON m.model_number = ?
+            JOIN appliance_categories m_cat ON m_cat.id = m.category_id
+            WHERE p.part_number = ?
+            """,
+            (model_number, part_number),
+        ).fetchone()
+        if mismatch and mismatch["part_appliance"] != mismatch["model_appliance"]:
+            return {
+                "compatible": False,
+                "confidence": "incompatible_appliance_type",
+                "part_appliance": mismatch["part_appliance"],
+                "model_appliance": mismatch["model_appliance"],
+            }
+
         return {"compatible": False, "confidence": "unknown"}
     finally:
         if _close:

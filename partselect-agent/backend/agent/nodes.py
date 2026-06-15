@@ -21,7 +21,7 @@ import yaml
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from backend.tools._connection import get_connection
 
@@ -67,16 +67,38 @@ _specialist_with_tools = _sonnet.bind_tools(ALL_TOOLS)
 
 _CONFIG_DIR = Path(__file__).parent.parent / "config" / "specialists"
 
-_FALLBACK_SYSTEM_PROMPT = (
-    "You are a helpful appliance parts specialist at PartSelect. "
-    "You assist with refrigerator and dishwasher parts ONLY — "
-    "finding parts, checking compatibility, troubleshooting symptoms, "
-    "installation guides, and order tracking. "
-    "If the customer's question is not about refrigerators or dishwashers, "
-    "politely decline and direct them to partselect.com or 1-888-738-4871. "
-    "Always use the available tools to look up accurate part numbers and "
-    "compatibility — never guess or invent part information."
-)
+
+def _fetch_active_slugs() -> list[str]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT slug FROM appliance_categories WHERE is_active = 1 ORDER BY id"
+        ).fetchall()
+        return [row["slug"] for row in rows]
+    except Exception:
+        return ["refrigerator", "dishwasher"]
+    finally:
+        conn.close()
+
+
+_ACTIVE_SLUGS: list[str] = _fetch_active_slugs()
+
+
+def _build_fallback_prompt(slugs: list[str]) -> str:
+    appliance_list = " and ".join(slugs)
+    return (
+        f"You are a helpful appliance parts specialist at PartSelect. "
+        f"You assist with {appliance_list} parts ONLY — "
+        "finding parts, checking compatibility, troubleshooting symptoms, "
+        "installation guides, and order tracking. "
+        f"If the customer's question is not about {appliance_list}, "
+        "politely decline and direct them to partselect.com or 1-888-738-4871. "
+        "Always use the available tools to look up accurate part numbers and "
+        "compatibility — never guess or invent part information."
+    )
+
+
+_FALLBACK_SYSTEM_PROMPT = _build_fallback_prompt(_ACTIVE_SLUGS)
 
 
 def _load_specialist_config(appliance_type: Optional[str]) -> dict:
@@ -91,33 +113,47 @@ def _load_specialist_config(appliance_type: Optional[str]) -> dict:
 # Supervisor node
 # ---------------------------------------------------------------------------
 
-_SUPERVISOR_SYSTEM = (
-    "You classify customer messages for the PartSelect chat agent.\n"
-    "PartSelect supports ONLY refrigerator and dishwasher appliance parts.\n\n"
-    "Rules:\n"
-    "1. Set appliance_type to 'refrigerator', 'dishwasher', or 'unknown' "
-    "(unknown = appliance-related but type unclear).\n"
-    "2. Extract model_number if the customer mentions one, otherwise null.\n"
-    "3. Set is_out_of_scope=true when the question is NOT about:\n"
-    "   - Refrigerator or dishwasher parts, symptoms, installation, or compatibility\n"
-    "   - PartSelect order status\n"
-    "   Out-of-scope examples: washing machines, ovens, microwaves, HVAC, "
-    "general cooking, unrelated topics, small talk.\n"
-    "4. If the user asks multiple questions, classify the dominant in-scope "
-    "refrigerator/dishwasher support intent. Do not force a model number onto "
-    "an appliance if the surrounding text suggests they may not match.\n\n"
-    "Respond with ONLY a JSON object — no markdown, no explanation:\n"
-    '{"appliance_type": "refrigerator" | "dishwasher" | "unknown", '
-    '"model_number": "<string>" | null, "is_out_of_scope": true | false}'
-)
+def _build_supervisor_system(slugs: list[str]) -> str:
+    quoted = ", ".join(f"'{s}'" for s in slugs)
+    appliance_list = " and ".join(slugs)
+    appliance_or_list = " or ".join(
+        s.capitalize() if i == 0 else s for i, s in enumerate(slugs)
+    )
+    scope_phrase = "/".join(slugs)
+    enum_options = " | ".join(f'"{s}"' for s in slugs)
+    return (
+        "You classify customer messages for the PartSelect chat agent.\n"
+        f"PartSelect supports ONLY {appliance_list} appliance parts.\n\n"
+        "Rules:\n"
+        f"1. Set appliance_type to {quoted}, or 'unknown' "
+        "(unknown = appliance-related but type unclear).\n"
+        "2. Extract model_number if the customer mentions one, otherwise null.\n"
+        "3. Set is_out_of_scope=true when the question is NOT about:\n"
+        f"   - {appliance_or_list} parts, symptoms, installation, or compatibility\n"
+        "   - PartSelect order status\n"
+        "   Out-of-scope examples: ovens, microwaves, HVAC, "
+        "general cooking, unrelated topics, small talk.\n"
+        "4. If the user asks multiple questions, classify the dominant in-scope "
+        f"{scope_phrase} support intent. Do not force a model number onto "
+        "an appliance if the surrounding text suggests they may not match.\n\n"
+        "Respond with ONLY a JSON object — no markdown, no explanation:\n"
+        '{"appliance_type": ' + enum_options + ' | "unknown", '
+        '"model_number": "<string>" | null, "is_out_of_scope": true | false}'
+    )
 
 
-class _SupervisorDecision(BaseModel):
-    appliance_type: Literal["refrigerator", "dishwasher", "unknown"]
-    model_number: Optional[str] = None
-    is_out_of_scope: bool = False
+def _build_supervisor_decision_model(slugs: list[str]):
+    ApplianceTypeLiteral = Literal[tuple(slugs + ["unknown"])]  # type: ignore[valid-type]
+    return create_model(
+        "SupervisorDecision",
+        appliance_type=(ApplianceTypeLiteral, ...),
+        model_number=(Optional[str], None),
+        is_out_of_scope=(bool, False),
+    )
 
 
+_SUPERVISOR_SYSTEM = _build_supervisor_system(_ACTIVE_SLUGS)
+_SupervisorDecision = _build_supervisor_decision_model(_ACTIVE_SLUGS)
 _structured_supervisor = _supervisor_model.with_structured_output(_SupervisorDecision)
 
 
@@ -177,7 +213,7 @@ def supervisor_node(state: AgentState) -> dict:
             model_appliance = _lookup_model_appliance(model_number)
             if (
                 model_appliance
-                and decision.appliance_type in ("refrigerator", "dishwasher")
+                and decision.appliance_type in _ACTIVE_SLUGS
                 and model_appliance != decision.appliance_type
             ):
                 model_number = None
@@ -224,15 +260,21 @@ def specialist_node(state: AgentState) -> dict:
 # Decline node — out-of-scope questions, bypasses specialist + validator
 # ---------------------------------------------------------------------------
 
-_DECLINE_CONTENT = (
-    "I'm here to help with **refrigerator and dishwasher parts** only — "
-    "finding parts, checking compatibility, troubleshooting symptoms, "
-    "installation guides, and order tracking.\n\n"
-    "For other appliance types or general questions, please visit "
-    "[partselect.com](https://www.partselect.com) or contact PartSelect "
-    "support at **1-888-738-4871**.\n\n"
-    "Is there anything I can help you with for your refrigerator or dishwasher?"
-)
+def _build_decline_content(slugs: list[str]) -> str:
+    bold_list = " and ".join(f"**{s}**" for s in slugs)
+    question_list = " or ".join(f"your {s}" for s in slugs)
+    return (
+        f"I'm here to help with {bold_list} parts only — "
+        "finding parts, checking compatibility, troubleshooting symptoms, "
+        "installation guides, and order tracking.\n\n"
+        "For other appliance types or general questions, please visit "
+        "[partselect.com](https://www.partselect.com) or contact PartSelect "
+        "support at **1-888-738-4871**.\n\n"
+        f"Is there anything I can help you with for {question_list}?"
+    )
+
+
+_DECLINE_CONTENT = _build_decline_content(_ACTIVE_SLUGS)
 
 
 def decline_node(state: AgentState) -> dict:
